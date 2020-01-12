@@ -146,16 +146,37 @@ int get_block1_wmbus_info(int tty_fd_l) {
     return 0;
 }
 
+int set_tx_interval(int tty_fd_l, unsigned int interval) {
+    int cnt, i,j;
+    unsigned char res_arr[100] = {0};
+    unsigned char stxi_cmd[] = {0x7E,0x46,0x04,0x00,0x00,0x7E};
+
+    stxi_cmd[3] = (unsigned char)  interval & 0x00FF;
+    stxi_cmd[4] = (unsigned char) ((interval & 0xFF00) >> 8);
+    fprintf(stdout, "[%d]-> ", interval);
+    for (i=0 ; i<6 ; i++)
+        fprintf(stdout, "%02X",stxi_cmd[i]);
+    fprintf(stdout, "\n");
+
+    /* Send command to device */
+    write(tty_fd_l, stxi_cmd, 6);
+    sleep(1);
+    cnt = read(tty_fd_l,&res_arr,100);
+
+    fprintf(stdout, "<- ");
+    for (i=0 ; i<8 ; i++)
+        fprintf(stdout, "%02X",res_arr[i]);
+    fprintf(stdout, "\n\n");
+
+    fprintf(stdout, "Set TX Interval: %d seconds\n", res_arr[4] << 8 | res_arr[3]);
+    return 0;
+}
+
 int get_tx_interval(int tty_fd_l) {
     int cnt, i,j;
     unsigned char res_arr[100] = {0};
-    unsigned char answer;
     unsigned char txi_cmd[] = {0x7E,0x47,0x02,0x7E};
-    unsigned int interval = 0;
 
-    memset(res_arr,0,100);
-    sleep(1);
-//    gak_cmd[1] = j;
     fprintf(stdout, "-> ");
     for (i=0 ; i<4 ; i++)
         fprintf(stdout, "%02X",txi_cmd[i]);
@@ -329,9 +350,10 @@ int main(int argc,char** argv)
     int g_autolock_status = 0;
     int g_info=0;
     int g_tx_interval = 0;
+    unsigned int s_tx_interval = 0;
     char* r_auto_lock_string = NULL;
 
-    while ((option = getopt(argc, argv,"d:sr:eb:DEkit")) != -1) {
+    while ((option = getopt(argc, argv,"d:sr:eb:DEkitT:")) != -1) {
         switch (option) {
             case 'd' : tty_device = optarg; 
                 break;
@@ -350,6 +372,8 @@ int main(int argc,char** argv)
             case 'i' : g_info = 1;
                 break;
             case 't' : g_tx_interval = 1;
+                break;
+            case 'T' : s_tx_interval = atoi(optarg);
                 break;
             default: print_usage(); 
                  exit(EXIT_FAILURE);
@@ -391,6 +415,9 @@ int main(int argc,char** argv)
 
     if (g_tx_interval)
         get_tx_interval(tty_fd);
+    
+    if (s_tx_interval)
+        set_tx_interval(tty_fd, s_tx_interval);
 
 exit:
     close(tty_fd);
