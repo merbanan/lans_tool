@@ -29,9 +29,19 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #define ENC_ENABLE 2
 
 void print_usage() {
-    printf("lans_tool version 0.1, Copyright (c) 2020 Benjamin Larsson\n");  
+    printf("lans_tool version 0.2, Copyright (c) 2020 Benjamin Larsson\n");
     printf("Usage: lans_tool [OPTION]...\n");
+    printf("\t -d Set serial device\n");
     printf("\t -s Get autolock status\n");
+    printf("\t -s Restart autolock status <HEX>\n");
+    printf("\t -t Get transmit interval\n");
+    printf("\t -T Set transmit interval <Interval>\n");
+    printf("\t -i Get sensor info\n");
+    printf("\t -D Disable sensor encryption\n");
+    printf("\t -E Enable sensor encryption\n");
+    printf("\t -m Get wmbus mode\n");
+    printf("\t -M Set wmbus mode\n");
+    printf("\n\n ./lans_tool -M FF0101 to set wmbus mode to S1\n");
 }
 
 static int decode_hex(char ch)
@@ -100,6 +110,84 @@ int open_device(char* tty_device) {
 }
 
 
+int get_wmbus_mode(int tty_fd_l) {
+    int cnt, i,j;
+    unsigned char res_arr[100] = {0};
+    unsigned char gm_cmd[] = {0x7E,0x14,0x02,0x7E};
+    unsigned char answer;
+
+    fprintf(stdout, "-> ");
+    for (i=0 ; i<4 ; i++)
+        fprintf(stdout, "%02X",gm_cmd[i]);
+    fprintf(stdout, "\n");
+
+    /* Send command to device */
+    write(tty_fd_l, gm_cmd, 4);
+    sleep(1);
+    cnt = read(tty_fd_l,&res_arr,100);
+
+    fprintf(stdout, "<- ");
+    for (i=0 ; i<8 ; i++)
+        fprintf(stdout, "%02X",res_arr[i]);
+    fprintf(stdout, "\n\n");
+
+    fprintf(stdout, "WMBus input mode: ");
+    /* Parse wmbus input mode */
+    answer = res_arr[3];
+    switch(answer) {
+        case 0x1: fprintf(stdout, "S1\n"); break;
+        case 0x2: fprintf(stdout, "T1 and C1\n"); break;
+        case 0xFF: fprintf(stdout, "Not present\n"); break;
+        default: fprintf(stdout, "Unknown\n"); break;
+    }
+
+    fprintf(stdout, "WMBus output mode: ");
+    /* Parse wmbus output mode */
+    answer = res_arr[4];
+    switch(answer) {
+        case 0x1: fprintf(stdout, "S1\n"); break;
+        case 0x2: fprintf(stdout, "T1\n"); break;
+        case 0x3: fprintf(stdout, "C1\n"); break;
+        default: fprintf(stdout, "Unknown\n"); break;
+    }
+
+    fprintf(stdout, "WMBus output frame format: ");
+    /* Parse wmbus output mode */
+    answer = res_arr[5];
+    switch(answer) {
+        case 0x1: fprintf(stdout, "A\n"); break;
+        case 0x2: fprintf(stdout, "B\n"); break;
+        default: fprintf(stdout, "Unknown\n"); break;
+    }
+    return 0;
+}
+
+int set_wmbus_mode(int tty_fd_l, unsigned char* set_mode) {
+    int cnt, i,j;
+    unsigned char res_arr[100] = {0};
+    unsigned char sm_cmd[] = {0x7E,0x15,0x05,0x00,0x00,0x00,0x7E};
+    unsigned char answer;
+
+    /* prepare command */
+    sm_cmd[3] = set_mode[0];
+    sm_cmd[4] = set_mode[1];
+    sm_cmd[5] = set_mode[2];
+    fprintf(stdout, "-> ");
+    for (i=0 ; i<7 ; i++)
+        fprintf(stdout, "%02X",sm_cmd[i]);
+    fprintf(stdout, "\n");
+
+    /* Send command to device */
+    write(tty_fd_l, sm_cmd, 7);
+    sleep(1);
+    cnt = read(tty_fd_l,&res_arr,100);
+
+    fprintf(stdout, "<- ");
+    for (i=0 ; i<9 ; i++)
+        fprintf(stdout, "%02X",res_arr[i]);
+    fprintf(stdout, "\n\n");
+}
+
 
 // Decode two bytes into three letters of five bits
 static void m_bus_manuf_decode(unsigned int m_field, char* three_letter_code) {
@@ -108,7 +196,6 @@ static void m_bus_manuf_decode(unsigned int m_field, char* three_letter_code) {
     three_letter_code[2] = (m_field & 0x1F) + 0x40;
     three_letter_code[3] = 0;
 }
-
 
 int get_block1_wmbus_info(int tty_fd_l) {
     int cnt, i,j;
@@ -196,36 +283,6 @@ int get_tx_interval(int tty_fd_l) {
     return 0;
 }
 
-int get_aes_key(int tty_fd_l) {
-    int cnt, i,j;
-    unsigned char res_arr[100] = {0};
-    unsigned char answer;
-    unsigned char gak_cmd[] = {0x7E,0x14,0x02,0x7E};
-
-    for (j=0 ; j<=0xFF ; j++) {
-
-        if (j==0x44) j++; // skip restart_autolock
-
-        memset(res_arr,0,100);
-        sleep(1);
-        gak_cmd[1] = j;
-        fprintf(stdout, "[%x]-> ",j);
-        for (i=0 ; i<4 ; i++)
-            fprintf(stdout, "%02X",gak_cmd[i]);
-        fprintf(stdout, "\n");
-
-        /* Send command to device */
-        write(tty_fd_l, gak_cmd, 4);
-        sleep(1);
-        cnt = read(tty_fd_l,&res_arr,100);
-        
-        fprintf(stdout, "<- ");
-        for (i=0 ; i<20 ; i++)
-            fprintf(stdout, "%02X",res_arr[i]);
-        fprintf(stdout, "\n\n");
-    }
-    return 0;
-}
 
 int get_encryption(int tty_fd_l) {
     int cnt, i;
@@ -350,10 +407,12 @@ int main(int argc,char** argv)
     int g_autolock_status = 0;
     int g_info=0;
     int g_tx_interval = 0;
+    int g_wmbus_mode = 0;
+    char*  s_wmbus_mode_string = NULL;
     unsigned int s_tx_interval = 0;
     char* r_auto_lock_string = NULL;
 
-    while ((option = getopt(argc, argv,"d:sr:eb:DEkitT:")) != -1) {
+    while ((option = getopt(argc, argv,"M:md:sr:eb:DEkitT:")) != -1) {
         switch (option) {
             case 'd' : tty_device = optarg; 
                 break;
@@ -374,6 +433,10 @@ int main(int argc,char** argv)
             case 't' : g_tx_interval = 1;
                 break;
             case 'T' : s_tx_interval = atoi(optarg);
+                break;
+            case 'm' : g_wmbus_mode = 1;
+                break;
+            case 'M' : s_wmbus_mode_string = optarg;
                 break;
             default: print_usage(); 
                  exit(EXIT_FAILURE);
@@ -407,9 +470,6 @@ int main(int argc,char** argv)
             set_encryption(tty_fd, 0x01);
     }
 
-    if (g_aes_key)
-        get_aes_key(tty_fd);
-
     if (g_info)
         get_block1_wmbus_info(tty_fd);
 
@@ -419,6 +479,16 @@ int main(int argc,char** argv)
     if (s_tx_interval)
         set_tx_interval(tty_fd, s_tx_interval);
 
+    if (g_wmbus_mode)
+        get_wmbus_mode(tty_fd);
+
+    if (s_wmbus_mode_string) {
+        if (hex2bin(s_wmbus_mode_string,c,6) < 0) {
+          fprintf(stderr,"ERROR parsing hex string (should be 6 hex digits)\n");
+          return 1;
+        }
+        set_wmbus_mode(tty_fd,c);
+    }
 exit:
     close(tty_fd);
     return EXIT_SUCCESS;
